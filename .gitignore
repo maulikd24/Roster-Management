@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+service_account.json
+data/attendance.db
+.pytest_cache/
+.streamlit/secrets.toml
+.claude/

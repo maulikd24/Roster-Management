@@ -1,0 +1,7 @@
+streamlit>=1.30
+pandas>=2.0
+gspread>=6.0
+google-auth>=2.20
+python-dotenv>=1.0
+tzdata>=2024.1
+pytest>=8.0
