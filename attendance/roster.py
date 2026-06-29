@@ -14,6 +14,7 @@ date range we're evaluating (driven by the Zendesk export).
 """
 from __future__ import annotations
 
+import io
 import re
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Sequence
@@ -77,6 +78,34 @@ def _read_public_csv() -> pd.DataFrame:  # pragma: no cover - requires network
         f"/export?format=csv&gid={config.GOOGLE_SHEETS_GID}"
     )
     return pd.read_csv(url, header=None, dtype=str, keep_default_na=False)
+
+
+_SHEET_ID_RE = re.compile(r"/spreadsheets/d/([A-Za-z0-9_-]+)")
+_GID_RE = re.compile(r"[?#&]gid=(\d+)")
+
+
+def csv_export_url(sheet_url: str) -> str:
+    """Turn any Google Sheets URL into its public CSV export URL (with gid)."""
+    m = _SHEET_ID_RE.search(sheet_url)
+    if not m:
+        raise ValueError("Not a Google Sheets URL (expected /spreadsheets/d/<id>).")
+    sheet_id = m.group(1)
+    gid_m = _GID_RE.search(sheet_url)
+    gid = gid_m.group(1) if gid_m else "0"
+    return (f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+            f"/export?format=csv&gid={gid}")
+
+
+def read_grid_from_url(sheet_url: str) -> pd.DataFrame:
+    """Read a sheet tab (by full URL) into a header-less grid via public CSV."""
+    return pd.read_csv(csv_export_url(sheet_url), header=None, dtype=str,
+                       keep_default_na=False)
+
+
+def read_grid_from_csv(data) -> pd.DataFrame:
+    """Read an uploaded CSV (bytes or text) into a header-less grid."""
+    buf = io.BytesIO(data) if isinstance(data, (bytes, bytearray)) else io.StringIO(data)
+    return pd.read_csv(buf, header=None, dtype=str, keep_default_na=False)
 
 
 # ---------------------------------------------------------------------------

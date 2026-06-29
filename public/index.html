@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Support Roster &amp; Attendance</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>📞 Support Roster &amp; Attendance</h1>
+    <nav class="tabs">
+      <button class="tab active" data-tab="attendance">📊 Attendance</button>
+      <button class="tab" data-tab="roster">📅 Roster scheduling</button>
+    </nav>
+  </header>
+
+  <!-- ATTENDANCE -->
+  <section id="attendance" class="panel active">
+    <div class="card form">
+      <label>Roster Google Sheet link
+        <input type="url" id="att-roster-url" placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=0" />
+      </label>
+      <div class="or">or upload roster CSV</div>
+      <input type="file" id="att-roster-file" accept=".csv" />
+      <label>Zendesk Explore export (CSV, required)
+        <input type="file" id="att-zendesk-file" accept=".csv" />
+      </label>
+      <label>Export timezone
+        <select id="att-tz">
+          <option>Asia/Kolkata</option><option>UTC</option>
+          <option>America/New_York</option><option>Europe/London</option>
+        </select>
+      </label>
+      <button id="att-run" class="primary">Map attendance</button>
+      <span id="att-status" class="status"></span>
+    </div>
+    <div id="att-results"></div>
+  </section>
+
+  <!-- ROSTER -->
+  <section id="roster" class="panel">
+    <div class="card form">
+      <label>Current roster Google Sheet link
+        <input type="url" id="ros-roster-url" placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=1745863794" />
+      </label>
+      <div class="or">or upload current-roster CSV</div>
+      <input type="file" id="ros-roster-file" accept=".csv" />
+      <label>Shift-history link <span class="muted">(month, agent, shift — optional)</span>
+        <input type="url" id="ros-hist-url" placeholder="history tab link (optional)" />
+      </label>
+      <div class="or">or upload history CSV</div>
+      <input type="file" id="ros-hist-file" accept=".csv" />
+      <label>Target month <span class="muted">(YYYY-MM, optional)</span>
+        <input type="text" id="ros-month" placeholder="e.g. 2026-07" />
+      </label>
+      <button id="ros-run" class="primary">Recommend next roster</button>
+      <span id="ros-status" class="status"></span>
+    </div>
+    <div id="ros-results"></div>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>
