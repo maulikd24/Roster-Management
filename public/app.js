@@ -1,40 +1,60 @@
 "use strict";
 
-// Tab switching
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const pctClass = (p) => (p >= 90 ? "g" : p >= 75 ? "a" : "r");
+const barColor = (p) => (p >= 90 ? "#16a34a" : p >= 75 ? "#f59e0b" : "#ef4444");
+
+// ---- Auth ----
+function getPw() { return sessionStorage.getItem("app_pw") || ""; }
+function authHeaders() { const pw = getPw(); return pw ? { "X-App-Password": pw } : {}; }
+
+async function initAuth() {
+  try {
+    const cfg = await (await fetch("/api/config")).json();
+    if (cfg.auth_required && !getPw()) showLogin();
+  } catch (e) { /* ignore */ }
+}
+function showLogin() { $("login").hidden = false; }
+$("login-btn").addEventListener("click", async () => {
+  const pw = $("login-pw").value;
+  const res = await fetch("/api/records", { headers: { "X-App-Password": pw } });
+  if (res.ok) { sessionStorage.setItem("app_pw", pw); $("login").hidden = true; }
+  else { $("login-err").textContent = "Incorrect password."; }
+});
+
+// ---- Tabs ----
 document.querySelectorAll(".tab").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
     document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
     btn.classList.add("active");
-    document.getElementById(btn.dataset.tab).classList.add("active");
+    $(btn.dataset.tab).classList.add("active");
+    if (btn.dataset.tab === "archive") loadArchive();
   });
 });
 
-const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-
-function barColor(p) { return p >= 90 ? "#1d9e75" : p >= 75 ? "#ef9f27" : "#e24b4a"; }
-
 async function postForm(url, fd, statusEl, btn) {
-  statusEl.className = "status";
-  statusEl.textContent = "Working…";
-  btn.disabled = true;
+  statusEl.className = "status"; statusEl.textContent = "Working…"; btn.disabled = true;
   try {
-    const res = await fetch(url, { method: "POST", body: fd });
+    const res = await fetch(url, { method: "POST", body: fd, headers: authHeaders() });
     const data = await res.json();
+    if (res.status === 401) { showLogin(); throw new Error("Password required."); }
     if (!res.ok) throw new Error(data.detail || res.statusText);
-    statusEl.textContent = "Done.";
-    return data;
+    statusEl.textContent = "Done."; return data;
   } catch (e) {
-    statusEl.className = "status err";
-    statusEl.textContent = "Error: " + e.message;
-    return null;
-  } finally {
-    btn.disabled = false;
-  }
+    statusEl.className = "status err"; statusEl.textContent = "Error: " + e.message; return null;
+  } finally { btn.disabled = false; }
+}
+
+function download(name, text, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: type || "text/csv" }));
+  a.download = name; a.click();
 }
 
 // ---------------- Attendance ----------------
+let _perAgent = [];
 $("att-run").addEventListener("click", async () => {
   const fd = new FormData();
   const zf = $("att-zendesk-file").files[0];
@@ -43,52 +63,97 @@ $("att-run").addEventListener("click", async () => {
   if ($("att-roster-url").value.trim()) fd.append("roster_url", $("att-roster-url").value.trim());
   if ($("att-roster-file").files[0]) fd.append("roster_file", $("att-roster-file").files[0]);
   fd.append("export_tz", $("att-tz").value);
-
   const data = await postForm("/api/attendance", fd, $("att-status"), $("att-run"));
   if (data) renderAttendance(data);
 });
 
 function renderAttendance(d) {
   const s = d.summary;
-  const kpis = [
-    ["Attendance", s.attendance_pct + "%"], ["On time", s.on_time_pct + "%"],
-    ["Avg coverage", s.avg_coverage_pct + "%"], ["Late", s.late], ["Absent", s.absent],
-  ];
-  let html = `<p class="note">Period: ${esc(d.range[0])} → ${esc(d.range[1])} · ${s.scheduled} scheduled shifts</p>`;
+  const kpis = [["Attendance", s.attendance_pct + "%"], ["On time", s.on_time_pct + "%"],
+    ["Avg coverage", s.avg_coverage_pct + "%"], ["Late", s.late], ["Absent", s.absent]];
+  let html = `<p class="note">Period ${esc(d.range[0])} → ${esc(d.range[1])} · ${s.scheduled} scheduled shifts</p>`;
   html += `<div class="kpis">` + kpis.map(([l, v]) =>
     `<div class="kpi"><div class="label">${l}</div><div class="value">${v}</div></div>`).join("") + `</div>`;
-
   if (d.unmapped && d.unmapped.length)
-    html += `<p class="note">⚠️ No Zendesk match for: ${esc(d.unmapped.join(", "))}</p>`;
+    html += `<div class="warn">⚠️ No Zendesk match for: ${esc(d.unmapped.join(", "))}</div>`;
 
-  html += `<h2>Attendance by agent</h2><table><thead><tr>
-    <th>Agent</th><th>Attendance</th><th class="num">On/Late/Abs</th><th class="num">Coverage</th><th></th></tr></thead><tbody>`;
-  d.per_agent.slice().sort((a, b) => b.attendance_pct - a.attendance_pct).forEach((a) => {
+  _perAgent = d.per_agent.slice().sort((a, b) => b.attendance_pct - a.attendance_pct);
+  html += `<h2>Attendance by agent
+    <button class="secondary" id="dl-csv">⬇️ CSV</button>
+    <button class="secondary" id="dl-xlsx">⬇️ Excel</button></h2>`;
+  html += `<table><thead><tr><th>Agent</th><th>Attendance</th><th class="num">On/Late/Abs</th><th class="num">Coverage</th><th></th></tr></thead><tbody>`;
+  _perAgent.forEach((a) => {
     html += `<tr><td>${esc(a.agent)}</td>
-      <td><span class="bar-wrap"><span class="bar" style="width:${Math.max(a.attendance_pct, 1.5)}%;background:${barColor(a.attendance_pct)}"></span></span>
-      <span class="num"> ${a.attendance_pct}%</span></td>
+      <td><span class="bar-wrap"><span class="bar" style="width:${Math.max(a.attendance_pct, 2)}%;background:${barColor(a.attendance_pct)}"></span></span>
+      <span class="pct ${pctClass(a.attendance_pct)}">${a.attendance_pct}%</span></td>
       <td class="num">${a.on_time}/${a.late}/${a.absent}</td>
       <td class="num">${a.coverage_pct}%</td>
       <td><span class="tag">${esc(a.note)}</span></td></tr>`;
   });
   html += `</tbody></table>`;
 
-  // grid
-  html += `<h2>Day-by-day</h2><div class="grid-table"><table><thead><tr><th>Agent</th>`;
-  d.grid.dates.forEach((dt) => html += `<th>${esc(dt.slice(5))}</th>`);
-  html += `</tr></thead><tbody>`;
-  const ab = { on_time: "P", late: "L", absent: "A", excused: "E", off: "·", "": "" };
-  d.grid.rows.forEach((r) => {
-    html += `<tr><td>${esc(r.agent)}</td>`;
-    r.cells.forEach((c) => html += `<td class="cell s-${c || "off"}">${ab[c] ?? ""}</td>`);
-    html += `</tr>`;
-  });
-  html += `</tbody></table></div>
-    <p class="note">P = on time · L = late · A = absent · E = leave/comp-off · · = off</p>`;
+  // Weekly team calendar
+  html += `<h2>Weekly calendar</h2><div class="weeks">` + weeklyCalendar(d.grid) + `</div>
+    <p class="legend"><span class="pct g">P</span> on time
+      <span class="pct a">L</span> late <span class="pct r">A</span> absent
+      <span class="pct" style="background:var(--blue-bg);color:#1e40af">E</span> leave · · off</p>`;
   $("att-results").innerHTML = html;
+  $("dl-csv").onclick = () => download("attendance.csv", toCSV(_perAgent));
+  $("dl-xlsx").onclick = () => {
+    const ws = XLSX.utils.json_to_sheet(_perAgent);
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Attendance");
+    XLSX.writeFile(wb, "attendance.xlsx");
+  };
+}
+
+function toCSV(rows) {
+  if (!rows.length) return "";
+  const cols = Object.keys(rows[0]);
+  return cols.join(",") + "\n" + rows.map((r) => cols.map((c) =>
+    `"${String(r[c]).replace(/"/g, '""')}"`).join(",")).join("\n");
+}
+
+const ABBR = { on_time: "P", late: "L", absent: "A", excused: "E", off: "·", "": "" };
+const WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+function mondayOf(d) { const x = new Date(d + "T00:00:00"); const wd = (x.getDay() + 6) % 7; x.setDate(x.getDate() - wd); return x; }
+function ymd(dt) { return dt.toISOString().slice(0, 10); }
+
+function weeklyCalendar(grid) {
+  // status lookup: agent -> date -> status
+  const stat = {};
+  grid.rows.forEach((r) => { stat[r.agent] = {}; grid.dates.forEach((dt, i) => stat[r.agent][dt] = r.cells[i]); });
+  const agents = grid.rows.map((r) => r.agent);
+  // group dates into weeks by Monday
+  const weeks = {};
+  grid.dates.forEach((dt) => { const k = ymd(mondayOf(dt)); (weeks[k] = weeks[k] || []).push(dt); });
+  let out = "";
+  Object.keys(weeks).sort().forEach((wk) => {
+    const mon = new Date(wk + "T00:00:00");
+    const cols = [...Array(7)].map((_, i) => { const dd = new Date(mon); dd.setDate(mon.getDate() + i); return ymd(dd); });
+    out += `<div class="week card"><h3>Week of ${wk}</h3><div class="cal"><table><thead><tr><th>Agent</th>`;
+    cols.forEach((c, i) => out += `<th>${WD[i]} ${c.slice(8)}</th>`);
+    out += `</tr></thead><tbody>`;
+    agents.forEach((ag) => {
+      out += `<tr><td>${esc(ag)}</td>`;
+      cols.forEach((c) => { const s = (stat[ag] || {})[c] || ""; out += `<td class="cell s-${s || "off"}">${ABBR[s] ?? ""}</td>`; });
+      out += `</tr>`;
+    });
+    out += `</tbody></table></div></div>`;
+  });
+  return out;
 }
 
 // ---------------- Roster scheduling ----------------
+function readTargets() {
+  const t = {};
+  ["Morning", "Afternoon", "Night"].forEach((s) => {
+    t[s] = {}; ["Sun-Thurs", "Tues-Sat"].forEach((d) => {
+      t[s][d] = parseInt($(`t-${s}-${d}`).value || "0", 10);
+    });
+  });
+  return t;
+}
+
 $("ros-run").addEventListener("click", async () => {
   const fd = new FormData();
   if ($("ros-roster-url").value.trim()) fd.append("roster_url", $("ros-roster-url").value.trim());
@@ -99,37 +164,62 @@ $("ros-run").addEventListener("click", async () => {
   if ($("ros-hist-url").value.trim()) fd.append("history_url", $("ros-hist-url").value.trim());
   if ($("ros-hist-file").files[0]) fd.append("history_file", $("ros-hist-file").files[0]);
   if ($("ros-month").value.trim()) fd.append("month", $("ros-month").value.trim());
-
+  fd.append("targets", JSON.stringify(readTargets()));
   const data = await postForm("/api/roster/recommend", fd, $("ros-status"), $("ros-run"));
   if (data) renderRoster(data);
 });
 
-function download(name, text) {
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
-  a.download = name; a.click();
-}
-
 function renderRoster(d) {
-  const cov = Object.entries(d.coverage).map(([k, v]) => `${k} ${v}`).join(" · ");
-  let html = `<p class="note">Recommended for <b>${esc(d.month)}</b> · coverage ${esc(cov)} ·
-    fairness spread avg ${d.avg_spread}, max ${d.max_spread} (lower = more even)</p>`;
+  const days = ["Sun-Thurs", "Tues-Sat"], shifts = ["Night", "Afternoon", "Morning"];
+  let html = `<p class="note">Recommended for <b>${esc(d.month)}</b> · fairness spread: shift avg ${d.avg_shift_spread} (max ${d.max_shift_spread}), day-week avg ${d.avg_day_spread} — lower is fairer.</p>`;
+  if (d.unfilled_slots) html += `<div class="warn">⚠️ ${d.unfilled_slots} slot(s) unfilled (pool smaller than targets).</div>`;
+  if (d.unassigned_agents && d.unassigned_agents.length) html += `<div class="warn">⚠️ Not placed: ${esc(d.unassigned_agents.join(", "))}</div>`;
 
-  const shifts = ["Night", "Afternoon", "Morning"];
-  html += `<div class="shift-cols">`;
-  shifts.forEach((sh) => {
-    const rows = d.allocation.filter((r) => r.shift === sh);
-    html += `<div class="card shift-col"><h3>${sh} <span class="muted">${rows.length}</span></h3>`;
-    rows.forEach((r) => html += `<div class="row">${esc(r.agent)} <span class="muted">· ${esc(r.days)}${r.fixed ? " · fixed" : ""}</span></div>`);
+  // coverage grid
+  html += `<h2>Coverage grid</h2><table class="cov-grid"><thead><tr><th>Shift</th>` +
+    days.map((dd) => `<th>${dd}</th>`).join("") + `</tr></thead><tbody>`;
+  shifts.forEach((s) => {
+    html += `<tr><td>${s}</td>` + days.map((dd) => `<td class="n">${(d.coverage[s] || {})[dd] || 0}</td>`).join("") + `</tr>`;
+  });
+  html += `</tbody></table>`;
+
+  // shift columns
+  html += `<h2>Allocation</h2><div class="shift-cols">`;
+  shifts.forEach((s) => {
+    const rows = d.allocation.filter((r) => r.shift === s);
+    html += `<div class="shift-col ${s}"><h3>${s} <span class="day">${rows.length}</span></h3>`;
+    rows.forEach((r) => html += `<div class="row">${esc(r.agent)} <span class="day">· ${esc(r.days)}${r.fixed ? " · fixed" : ""}</span></div>`);
     html += `</div>`;
   });
   html += `</div>`;
 
-  html += `<h2>History rows to append (month, agent, shift)</h2>
-    <button class="secondary" id="dl-hist">⬇️ history CSV</button>
-    <button class="secondary" id="dl-alloc">⬇️ allocation CSV</button>
+  html += `<h2>History rows to append <button class="secondary" id="dl-hist">⬇️ history CSV</button>
+    <button class="secondary" id="dl-alloc">⬇️ allocation CSV</button></h2>
     <pre class="csv">${esc(d.history_csv)}</pre>`;
   $("ros-results").innerHTML = html;
   $("dl-hist").onclick = () => download("shift_history_append.csv", d.history_csv);
   $("dl-alloc").onclick = () => download("roster_" + d.month + ".csv", d.allocation_csv);
 }
+
+// ---------------- Archive ----------------
+$("arc-refresh").addEventListener("click", loadArchive);
+async function loadArchive() {
+  $("arc-status").textContent = "Loading…";
+  try {
+    const res = await fetch("/api/records", { headers: authHeaders() });
+    if (res.status === 401) { showLogin(); throw new Error("Password required."); }
+    const d = await res.json();
+    $("arc-status").textContent = "";
+    const recs = d.records || [];
+    if (!recs.length) { $("arc-results").innerHTML = `<p class="note">No saved records yet.</p>`; return; }
+    let html = `<table><thead><tr><th>Item</th><th>Uploaded</th><th class="num">Size</th><th></th></tr></thead><tbody>`;
+    recs.forEach((r) => {
+      const kb = r.size ? (r.size / 1024).toFixed(1) + " KB" : "";
+      html += `<tr><td>${esc(r.key)}</td><td>${esc((r.uploaded_at || "").slice(0, 19).replace("T", " "))}</td>
+        <td class="num">${kb}</td><td><a href="${esc(r.url)}" target="_blank">open</a></td></tr>`;
+    });
+    $("arc-results").innerHTML = html + `</tbody></table>`;
+  } catch (e) { $("arc-status").className = "status err"; $("arc-status").textContent = e.message; }
+}
+
+initAuth();

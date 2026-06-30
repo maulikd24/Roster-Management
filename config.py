@@ -110,15 +110,17 @@ SHIFT_TIMINGS = {
     "Afternoon": (14, 0, 23, 0),
     "Morning": (6, 30, 15, 30),
 }
-# Chronology agents rotate through each quarter (Night -> Afternoon -> Morning).
 SHIFT_CHRONOLOGY = ["Night", "Afternoon", "Morning"]
-# Fixed coverage (headcount) per shift, every quarter. Must sum to the pool size.
-SHIFT_COUNTS = {"Night": 6, "Afternoon": 6, "Morning": 4}
-# Working-days patterns, advanced only after a full timing cycle.
-SCHEDULE_DAY_PATTERNS = ["Sun-Thurs", "Tues-Sat", "Mon-Fri"]
+# Day-weeks rotating agents use (Mon-Fri is reserved for abuse analysts only).
+SCHEDULE_DAY_PATTERNS = ["Sun-Thurs", "Tues-Sat"]
 
-# Seed: the user-provided initial (Jan-2026) placement the rotation starts from.
-SCHEDULE_SEED_CSV = DATA_DIR / "schedule_seed.csv"
+# Target roster structure: headcount per (shift, day-week). Default 4/6/6 split
+# across the two day-weeks (= 16 rotating agents). Configurable per request.
+TARGET_GRID = {
+    "Morning":   {"Sun-Thurs": 2, "Tues-Sat": 2},
+    "Afternoon": {"Sun-Thurs": 3, "Tues-Sat": 3},
+    "Night":     {"Sun-Thurs": 3, "Tues-Sat": 3},
+}
 
 # Abuse analysts kept on fixed timings, excluded from rotation: name -> timing.
 SCHEDULE_FIXED_AGENTS = {
@@ -126,3 +128,10 @@ SCHEDULE_FIXED_AGENTS = {
     "Piyush": (13, 0, 22, 0),   # 1PM - 10PM
 }
 SCHEDULE_FIXED_PATTERN = os.getenv("SCHEDULE_FIXED_PATTERN", "Mon-Fri")
+
+# --- Web app: access + storage ----------------------------------------------
+# Shared password gate. Empty = open (no gate). Set on the host to enable.
+SHARE_PASSWORD = os.getenv("SHARE_PASSWORD", "")
+# Vercel Blob token; when set, uploads are archived to Blob, else to data/uploads.
+BLOB_TOKEN = os.getenv("BLOB_READ_WRITE_TOKEN", "")
+UPLOADS_DIR = DATA_DIR / "uploads"

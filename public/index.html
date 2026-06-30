@@ -5,16 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Support Roster &amp; Attendance</title>
   <link rel="stylesheet" href="/styles.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
-  <header>
+  <!-- Login overlay -->
+  <div id="login" class="overlay" hidden>
+    <div class="login-card">
+      <h2>🔒 Enter access password</h2>
+      <input type="password" id="login-pw" placeholder="Password" />
+      <button class="primary" id="login-btn">Unlock</button>
+      <p id="login-err" class="status err"></p>
+    </div>
+  </div>
+
+  <header class="hero">
     <h1>📞 Support Roster &amp; Attendance</h1>
+    <p class="sub">Map attendance from Zendesk vs. the roster, and plan fair shift rotations.</p>
     <nav class="tabs">
       <button class="tab active" data-tab="attendance">📊 Attendance</button>
       <button class="tab" data-tab="roster">📅 Roster scheduling</button>
+      <button class="tab" data-tab="archive">🗂️ Archive</button>
     </nav>
   </header>
 
+  <main>
   <!-- ATTENDANCE -->
   <section id="attendance" class="panel active">
     <div class="card form">
@@ -46,7 +60,7 @@
       </label>
       <div class="or">or upload current-roster CSV</div>
       <input type="file" id="ros-roster-file" accept=".csv" />
-      <label>Shift-history link <span class="muted">(month, agent, shift — optional)</span>
+      <label>Shift-history link <span class="muted">(month, agent, shift, days — optional)</span>
         <input type="url" id="ros-hist-url" placeholder="history tab link (optional)" />
       </label>
       <div class="or">or upload history CSV</div>
@@ -54,11 +68,32 @@
       <label>Target month <span class="muted">(YYYY-MM, optional)</span>
         <input type="text" id="ros-month" placeholder="e.g. 2026-07" />
       </label>
+
+      <div class="grid-targets">
+        <span class="muted">Target headcounts (shift × day-week)</span>
+        <table>
+          <tr><th></th><th>Sun-Thurs</th><th>Tues-Sat</th></tr>
+          <tr><td>Morning</td><td><input type="number" id="t-Morning-Sun-Thurs" value="2" min="0"></td><td><input type="number" id="t-Morning-Tues-Sat" value="2" min="0"></td></tr>
+          <tr><td>Afternoon</td><td><input type="number" id="t-Afternoon-Sun-Thurs" value="3" min="0"></td><td><input type="number" id="t-Afternoon-Tues-Sat" value="3" min="0"></td></tr>
+          <tr><td>Night</td><td><input type="number" id="t-Night-Sun-Thurs" value="3" min="0"></td><td><input type="number" id="t-Night-Tues-Sat" value="3" min="0"></td></tr>
+        </table>
+      </div>
+
       <button id="ros-run" class="primary">Recommend next roster</button>
       <span id="ros-status" class="status"></span>
     </div>
     <div id="ros-results"></div>
   </section>
+
+  <!-- ARCHIVE -->
+  <section id="archive" class="panel">
+    <div class="card">
+      <button id="arc-refresh" class="secondary">↻ Refresh archive</button>
+      <span id="arc-status" class="status"></span>
+      <div id="arc-results"></div>
+    </div>
+  </section>
+  </main>
 
   <script src="/app.js"></script>
 </body>

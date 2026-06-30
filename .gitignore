@@ -7,3 +7,4 @@ data/attendance.db
 .pytest_cache/
 .streamlit/secrets.toml
 .claude/
+data/uploads/
