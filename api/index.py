@@ -194,6 +194,28 @@ async def recommend(
     }
 
 
+@app.post("/api/roster/history")
+async def roster_history(
+    roster_url: str = Form(""),
+    history_file: UploadFile = File(None),
+    x_app_password: str = Header(None),
+):
+    _auth(x_app_password)
+    try:
+        if roster_url:
+            df = scheduling.load_history(url=roster_url)
+        elif history_file is not None:
+            df = scheduling.load_history(data=await history_file.read())
+        else:
+            raise HTTPException(400, "Provide a history link or file.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(400, f"Could not parse history: {exc}")
+    months = sorted(df["month"].unique().tolist())
+    return {"months": months, "records": df.to_dict(orient="records")}
+
+
 @app.get("/api/records")
 def records(x_app_password: str = Header(None)):
     _auth(x_app_password)

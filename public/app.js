@@ -81,11 +81,11 @@ function renderAttendance(d) {
   html += `<h2>Attendance by agent
     <button class="secondary" id="dl-csv">⬇️ CSV</button>
     <button class="secondary" id="dl-xlsx">⬇️ Excel</button></h2>`;
-  html += `<table><thead><tr><th>Agent</th><th>Attendance</th><th class="num">On/Late/Abs</th><th class="num">Coverage</th><th></th></tr></thead><tbody>`;
+  html += `<table class="att-table"><thead><tr><th>Agent</th><th>Attendance</th><th class="num">On/Late/Abs</th><th class="num">Coverage</th><th></th></tr></thead><tbody>`;
   _perAgent.forEach((a) => {
-    html += `<tr><td>${esc(a.agent)}</td>
-      <td><span class="bar-wrap"><span class="bar" style="width:${Math.max(a.attendance_pct, 2)}%;background:${barColor(a.attendance_pct)}"></span></span>
-      <span class="pct ${pctClass(a.attendance_pct)}">${a.attendance_pct}%</span></td>
+    html += `<tr>
+      <td title="${esc(a.agent)}">${esc(a.agent)}</td>
+      <td><div class="bar-cell"><span class="bar-wrap"><span class="bar" style="width:${Math.max(a.attendance_pct, 2)}%;background:${barColor(a.attendance_pct)}"></span></span><span class="pct ${pctClass(a.attendance_pct)}">${a.attendance_pct}%</span></div></td>
       <td class="num">${a.on_time}/${a.late}/${a.absent}</td>
       <td class="num">${a.coverage_pct}%</td>
       <td><span class="tag">${esc(a.note)}</span></td></tr>`;
@@ -93,10 +93,12 @@ function renderAttendance(d) {
   html += `</tbody></table>`;
 
   // Weekly team calendar
-  html += `<h2>Weekly calendar</h2><div class="weeks">` + weeklyCalendar(d.grid) + `</div>
-    <p class="legend"><span class="pct g">P</span> on time
-      <span class="pct a">L</span> late <span class="pct r">A</span> absent
-      <span class="pct" style="background:var(--blue-bg);color:#1e40af">E</span> leave · · off</p>`;
+  html += `<h2>Weekly attendance</h2><div class="weeks">` + weeklyCalendar(d.grid) + `</div>
+    <p class="legend"><span class="pct g">P</span> on time &nbsp;
+      <span class="pct a">L</span> late &nbsp;
+      <span class="pct r">A</span> absent &nbsp;
+      <span class="pct" style="background:var(--blue-bg);color:#1e40af">E</span> leave &nbsp;
+      <span style="color:var(--muted)">·</span> off</p>`;
   $("att-results").innerHTML = html;
   $("dl-csv").onclick = () => download("attendance.csv", toCSV(_perAgent));
   $("dl-xlsx").onclick = () => {
@@ -113,15 +115,17 @@ function toCSV(rows) {
     `"${String(r[c]).replace(/"/g, '""')}"`).join(",")).join("\n");
 }
 
-const ABBR = { on_time: "P", late: "L", absent: "A", excused: "E", off: "·", "": "" };
+const ABBR = { on_time: "P", late: "L", absent: "A", excused: "E", off: "·", "": "·" };
 const WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 function mondayOf(d) { const x = new Date(d + "T00:00:00"); const wd = (x.getDay() + 6) % 7; x.setDate(x.getDate() - wd); return x; }
-function ymd(dt) { return dt.toISOString().slice(0, 10); }
+// Use local date parts to avoid UTC offset shifting the date by -1 day in UTC+ timezones
+function ymd(dt) { return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0'); }
 
 function weeklyCalendar(grid) {
+  if (!grid || !grid.rows || !grid.dates || !grid.dates.length) return `<p class="note">No calendar data.</p>`;
   // status lookup: agent -> date -> status
   const stat = {};
-  grid.rows.forEach((r) => { stat[r.agent] = {}; grid.dates.forEach((dt, i) => stat[r.agent][dt] = r.cells[i]); });
+  grid.rows.forEach((r) => { stat[r.agent] = {}; grid.dates.forEach((dt, i) => { stat[r.agent][dt] = r.cells[i]; }); });
   const agents = grid.rows.map((r) => r.agent);
   // group dates into weeks by Monday
   const weeks = {};
@@ -131,11 +135,15 @@ function weeklyCalendar(grid) {
     const mon = new Date(wk + "T00:00:00");
     const cols = [...Array(7)].map((_, i) => { const dd = new Date(mon); dd.setDate(mon.getDate() + i); return ymd(dd); });
     out += `<div class="week card"><h3>Week of ${wk}</h3><div class="cal"><table><thead><tr><th>Agent</th>`;
-    cols.forEach((c, i) => out += `<th>${WD[i]} ${c.slice(8)}</th>`);
+    cols.forEach((c, i) => out += `<th>${WD[i]}<br><span style="font-weight:400;font-size:11px">${c.slice(5)}</span></th>`);
     out += `</tr></thead><tbody>`;
     agents.forEach((ag) => {
       out += `<tr><td>${esc(ag)}</td>`;
-      cols.forEach((c) => { const s = (stat[ag] || {})[c] || ""; out += `<td class="cell s-${s || "off"}">${ABBR[s] ?? ""}</td>`; });
+      cols.forEach((c) => {
+        const s = (stat[ag] || {})[c];
+        const cls = s ? s : "off";
+        out += `<td class="cell s-${cls}">${ABBR[s] ?? "·"}</td>`;
+      });
       out += `</tr>`;
     });
     out += `</tbody></table></div></div>`;
@@ -199,6 +207,60 @@ function renderRoster(d) {
   $("ros-results").innerHTML = html;
   $("dl-hist").onclick = () => download("shift_history_append.csv", d.history_csv);
   $("dl-alloc").onclick = () => download("roster_" + d.month + ".csv", d.allocation_csv);
+}
+
+// ---------------- Roster History ----------------
+let _histRecords = [];
+
+$("hist-run").addEventListener("click", async () => {
+  const fd = new FormData();
+  const url = $("hist-url").value.trim();
+  const file = $("hist-file").files[0];
+  if (!url && !file) {
+    $("hist-status").className = "status err"; $("hist-status").textContent = "Provide a history link or CSV."; return;
+  }
+  if (url) fd.append("roster_url", url);
+  if (file) fd.append("history_file", file);
+  const data = await postForm("/api/roster/history", fd, $("hist-status"), $("hist-run"));
+  if (data) {
+    _histRecords = data.records;
+    renderHistoryControls(data.months);
+  }
+});
+
+function renderHistoryControls(months) {
+  if (!months.length) { $("hist-results").innerHTML = `<p class="note">No data found in the uploaded file.</p>`; return; }
+  let sel = `<div class="hist-filter"><label>Filter by month <select id="hist-month">`;
+  months.slice().reverse().forEach((m) => sel += `<option value="${esc(m)}">${esc(m)}</option>`);
+  sel += `</select></label></div><div id="hist-alloc"></div>`;
+  $("hist-results").innerHTML = sel;
+  renderHistory(_histRecords, months[months.length - 1]);
+  $("hist-month").addEventListener("change", () => renderHistory(_histRecords, $("hist-month").value));
+}
+
+function renderHistory(records, month) {
+  const rows = records.filter((r) => r.month === month);
+  const el = $("hist-alloc");
+  if (!el) return;
+  if (!rows.length) { el.innerHTML = `<p class="note">No entries for ${esc(month)}.</p>`; return; }
+  const shifts = ["Night", "Afternoon", "Morning"];
+  let html = `<p class="note"><b>${esc(month)}</b> — ${rows.length} agent assignment(s)</p><div class="shift-cols">`;
+  shifts.forEach((s) => {
+    const sr = rows.filter((r) => r.shift === s);
+    if (!sr.length) return;
+    html += `<div class="shift-col ${s}"><h3>${s} <span class="day">${sr.length}</span></h3>`;
+    sr.forEach((r) => html += `<div class="row">${esc(r.agent)}<span class="day"> · ${esc(r.days || "")}</span></div>`);
+    html += `</div>`;
+  });
+  // any rows with unrecognised shift (e.g. fixed agents stored differently)
+  const other = rows.filter((r) => !shifts.includes(r.shift));
+  if (other.length) {
+    html += `<div class="shift-col" style="background:linear-gradient(120deg,#374151,#6b7280)"><h3>Other <span class="day">${other.length}</span></h3>`;
+    other.forEach((r) => html += `<div class="row">${esc(r.agent)}<span class="day"> · ${esc(r.shift)} · ${esc(r.days || "")}</span></div>`);
+    html += `</div>`;
+  }
+  html += `</div>`;
+  el.innerHTML = html;
 }
 
 // ---------------- Archive ----------------

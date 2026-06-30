@@ -24,6 +24,7 @@
     <nav class="tabs">
       <button class="tab active" data-tab="attendance">📊 Attendance</button>
       <button class="tab" data-tab="roster">📅 Roster scheduling</button>
+      <button class="tab" data-tab="history">📋 Roster History</button>
       <button class="tab" data-tab="archive">🗂️ Archive</button>
     </nav>
   </header>
@@ -83,6 +84,20 @@
       <span id="ros-status" class="status"></span>
     </div>
     <div id="ros-results"></div>
+  </section>
+
+  <!-- ROSTER HISTORY -->
+  <section id="history" class="panel">
+    <div class="card form">
+      <label>Shift history Google Sheet link <span class="muted">(tab with month, agent, shift, days columns)</span>
+        <input type="url" id="hist-url" placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=..." />
+      </label>
+      <div class="or">or upload history CSV</div>
+      <input type="file" id="hist-file" accept=".csv" />
+      <button id="hist-run" class="primary">Load history</button>
+      <span id="hist-status" class="status"></span>
+    </div>
+    <div id="hist-results"></div>
   </section>
 
   <!-- ARCHIVE -->
