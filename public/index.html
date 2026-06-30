@@ -22,7 +22,8 @@
     <h1>📞 Support Roster &amp; Attendance</h1>
     <p class="sub">Map attendance from Zendesk vs. the roster, and plan fair shift rotations.</p>
     <nav class="tabs">
-      <button class="tab active" data-tab="attendance">📊 Attendance</button>
+      <button class="tab active" data-tab="main">🏠 Main</button>
+      <button class="tab" data-tab="attendance">📊 Attendance</button>
       <button class="tab" data-tab="roster">📅 Roster scheduling</button>
       <button class="tab" data-tab="history">📋 Roster History</button>
       <button class="tab" data-tab="archive">🗂️ Archive</button>
@@ -30,8 +31,24 @@
   </header>
 
   <main>
+  <!-- MAIN — current active roster -->
+  <section id="main" class="panel active">
+    <div id="main-header" class="main-roster-header card" hidden>
+      <div>
+        <div id="main-month" class="main-month-title"></div>
+        <div id="main-saved-at" class="muted" style="font-size:13px;margin-top:4px"></div>
+      </div>
+      <div class="main-actions">
+        <button class="secondary" id="main-dl-csv">⬇️ CSV</button>
+        <button class="primary" id="main-save" hidden>💾 Save changes</button>
+      </div>
+    </div>
+    <span id="main-status" class="status"></span>
+    <div id="main-results"></div>
+  </section>
+
   <!-- ATTENDANCE -->
-  <section id="attendance" class="panel active">
+  <section id="attendance" class="panel">
     <div class="card form">
       <label>Roster Google Sheet link
         <input type="url" id="att-roster-url" placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=0" />

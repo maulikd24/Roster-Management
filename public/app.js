@@ -13,14 +13,18 @@ async function initAuth() {
   try {
     const cfg = await (await fetch("/api/config")).json();
     if (cfg.auth_required && !getPw()) showLogin();
-  } catch (e) { /* ignore */ }
+    else loadMain();
+  } catch (e) { loadMain(); }
 }
 function showLogin() { $("login").hidden = false; }
 $("login-btn").addEventListener("click", async () => {
   const pw = $("login-pw").value;
   const res = await fetch("/api/records", { headers: { "X-App-Password": pw } });
-  if (res.ok) { sessionStorage.setItem("app_pw", pw); $("login").hidden = true; }
-  else { $("login-err").textContent = "Incorrect password."; }
+  if (res.ok) {
+    sessionStorage.setItem("app_pw", pw);
+    $("login").hidden = true;
+    loadMain();
+  } else { $("login-err").textContent = "Incorrect password."; }
 });
 
 // ---- Tabs ----
@@ -30,6 +34,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
     document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
     btn.classList.add("active");
     $(btn.dataset.tab).classList.add("active");
+    if (btn.dataset.tab === "main") loadMain();
     if (btn.dataset.tab === "archive") loadArchive();
   });
 });
@@ -53,7 +58,118 @@ function download(name, text, type) {
   a.download = name; a.click();
 }
 
-// ---------------- Attendance ----------------
+// ================ MAIN TAB — current active roster ================
+const ROSTER_SHIFTS = ["Night", "Afternoon", "Morning"];
+const ROSTER_DAYWEEKS = ["Sun-Thurs", "Tues-Sat", "Mon-Fri"];
+let _mainAlloc = [];
+let _mainMonth = null;
+
+async function loadMain() {
+  const statusEl = $("main-status");
+  statusEl.className = "status"; statusEl.textContent = "Loading roster…";
+  try {
+    const res = await fetch("/api/roster/latest", { headers: authHeaders() });
+    if (res.status === 401) { showLogin(); return; }
+    const d = await res.json();
+    statusEl.textContent = "";
+    if (!d.month) {
+      $("main-header").hidden = true;
+      $("main-results").innerHTML = `<div class="card"><p class="note" style="font-size:15px;padding:8px 0">
+        No roster saved yet.<br>Go to <b>Roster scheduling</b> to generate one — it will appear here automatically.</p></div>`;
+      return;
+    }
+    _mainAlloc = d.allocation;
+    _mainMonth = d.month;
+    $("main-month").textContent = `Current Roster — ${d.month}`;
+    $("main-saved-at").textContent = d.saved_at
+      ? `Last updated: ${d.saved_at.slice(0, 16).replace("T", " ")} UTC`
+      : "";
+    $("main-header").hidden = false;
+    $("main-save").hidden = true;
+    renderMainRoster(d.allocation);
+  } catch (e) {
+    statusEl.className = "status err";
+    statusEl.textContent = "Could not load roster: " + e.message;
+  }
+}
+
+function renderMainRoster(alloc) {
+  const rotating = alloc.filter((r) => !r.fixed);
+  const fixed = alloc.filter((r) => r.fixed);
+
+  let html = `<div class="card"><table class="main-roster-table"><thead>
+    <tr><th>Agent</th><th>Shift</th><th>Day week</th><th></th></tr></thead><tbody>`;
+
+  ROSTER_SHIFTS.forEach((shift) => {
+    const rows = rotating.filter((r) => r.shift === shift);
+    if (!rows.length) return;
+    html += `<tr class="shift-header-row"><td colspan="4">${shift}</td></tr>`;
+    rows.forEach((r) => {
+      const shiftOpts = ROSTER_SHIFTS.map((s) =>
+        `<option value="${s}"${s === r.shift ? " selected" : ""}>${s}</option>`).join("");
+      const daysOpts = ["Sun-Thurs", "Tues-Sat"].map((d) =>
+        `<option value="${d}"${d === r.days ? " selected" : ""}>${d}</option>`).join("");
+      html += `<tr data-agent="${esc(r.agent)}">
+        <td>${esc(r.agent)}</td>
+        <td><select class="main-sel" data-field="shift">${shiftOpts}</select></td>
+        <td><select class="main-sel" data-field="days">${daysOpts}</select></td>
+        <td></td></tr>`;
+    });
+  });
+
+  if (fixed.length) {
+    html += `<tr class="shift-header-row"><td colspan="4">Fixed (Mon-Fri)</td></tr>`;
+    fixed.forEach((r) => {
+      html += `<tr><td>${esc(r.agent)}</td>
+        <td class="muted">${esc(r.shift)}</td>
+        <td class="muted">${esc(r.days)}</td>
+        <td><span class="tag">fixed</span></td></tr>`;
+    });
+  }
+
+  html += `</tbody></table></div>`;
+  $("main-results").innerHTML = html;
+
+  // wire up change detection
+  document.querySelectorAll(".main-sel").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      sel.closest("tr").classList.add("row-changed");
+      $("main-save").hidden = false;
+    });
+  });
+}
+
+$("main-save").addEventListener("click", async () => {
+  const rows = [];
+  document.querySelectorAll("#main-results tbody tr[data-agent]").forEach((tr) => {
+    rows.push({
+      agent: tr.dataset.agent,
+      shift: tr.querySelector("[data-field=shift]").value,
+      days: tr.querySelector("[data-field=days]").value,
+      fixed: false,
+    });
+  });
+  // append fixed agents unchanged
+  _mainAlloc.filter((r) => r.fixed).forEach((r) => rows.push(r));
+
+  const fd = new FormData();
+  fd.append("month", _mainMonth);
+  fd.append("allocation", JSON.stringify(rows));
+  const data = await postForm("/api/roster/save", fd, $("main-status"), $("main-save"));
+  if (data) {
+    _mainAlloc = rows;
+    $("main-save").hidden = true;
+    document.querySelectorAll(".row-changed").forEach((tr) => tr.classList.remove("row-changed"));
+    $("main-saved-at").textContent = `Last updated: ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`;
+  }
+});
+
+$("main-dl-csv").addEventListener("click", () => {
+  if (!_mainAlloc.length) return;
+  download(`roster_${_mainMonth || "current"}.csv`, toCSV(_mainAlloc));
+});
+
+// ================ ATTENDANCE ================
 let _perAgent = [];
 $("att-run").addEventListener("click", async () => {
   const fd = new FormData();
@@ -92,7 +208,6 @@ function renderAttendance(d) {
   });
   html += `</tbody></table>`;
 
-  // Weekly team calendar
   html += `<h2>Weekly attendance</h2><div class="weeks">` + weeklyCalendar(d.grid) + `</div>
     <p class="legend"><span class="pct g">P</span> on time &nbsp;
       <span class="pct a">L</span> late &nbsp;
@@ -118,16 +233,14 @@ function toCSV(rows) {
 const ABBR = { on_time: "P", late: "L", absent: "A", excused: "E", off: "·", "": "·" };
 const WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 function mondayOf(d) { const x = new Date(d + "T00:00:00"); const wd = (x.getDay() + 6) % 7; x.setDate(x.getDate() - wd); return x; }
-// Use local date parts to avoid UTC offset shifting the date by -1 day in UTC+ timezones
+// Use local date parts — toISOString() returns UTC and shifts date by -1 day in UTC+ timezones
 function ymd(dt) { return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0'); }
 
 function weeklyCalendar(grid) {
   if (!grid || !grid.rows || !grid.dates || !grid.dates.length) return `<p class="note">No calendar data.</p>`;
-  // status lookup: agent -> date -> status
   const stat = {};
   grid.rows.forEach((r) => { stat[r.agent] = {}; grid.dates.forEach((dt, i) => { stat[r.agent][dt] = r.cells[i]; }); });
   const agents = grid.rows.map((r) => r.agent);
-  // group dates into weeks by Monday
   const weeks = {};
   grid.dates.forEach((dt) => { const k = ymd(mondayOf(dt)); (weeks[k] = weeks[k] || []).push(dt); });
   let out = "";
@@ -151,7 +264,7 @@ function weeklyCalendar(grid) {
   return out;
 }
 
-// ---------------- Roster scheduling ----------------
+// ================ ROSTER SCHEDULING ================
 function readTargets() {
   const t = {};
   ["Morning", "Afternoon", "Night"].forEach((s) => {
@@ -179,11 +292,12 @@ $("ros-run").addEventListener("click", async () => {
 
 function renderRoster(d) {
   const days = ["Sun-Thurs", "Tues-Sat"], shifts = ["Night", "Afternoon", "Morning"];
-  let html = `<p class="note">Recommended for <b>${esc(d.month)}</b> · fairness spread: shift avg ${d.avg_shift_spread} (max ${d.max_shift_spread}), day-week avg ${d.avg_day_spread} — lower is fairer.</p>`;
+  let html = `<div class="warn" style="background:var(--green-bg);color:#166534">
+    ✅ Roster saved for <b>${esc(d.month)}</b> — click <b>Main</b> to view and edit it.</div>`;
+  html += `<p class="note">Fairness spread: shift avg ${d.avg_shift_spread} (max ${d.max_shift_spread}), day-week avg ${d.avg_day_spread} — lower is fairer.</p>`;
   if (d.unfilled_slots) html += `<div class="warn">⚠️ ${d.unfilled_slots} slot(s) unfilled (pool smaller than targets).</div>`;
   if (d.unassigned_agents && d.unassigned_agents.length) html += `<div class="warn">⚠️ Not placed: ${esc(d.unassigned_agents.join(", "))}</div>`;
 
-  // coverage grid
   html += `<h2>Coverage grid</h2><table class="cov-grid"><thead><tr><th>Shift</th>` +
     days.map((dd) => `<th>${dd}</th>`).join("") + `</tr></thead><tbody>`;
   shifts.forEach((s) => {
@@ -191,7 +305,6 @@ function renderRoster(d) {
   });
   html += `</tbody></table>`;
 
-  // shift columns
   html += `<h2>Allocation</h2><div class="shift-cols">`;
   shifts.forEach((s) => {
     const rows = d.allocation.filter((r) => r.shift === s);
@@ -209,7 +322,7 @@ function renderRoster(d) {
   $("dl-alloc").onclick = () => download("roster_" + d.month + ".csv", d.allocation_csv);
 }
 
-// ---------------- Roster History ----------------
+// ================ ROSTER HISTORY ================
 let _histRecords = [];
 
 $("hist-run").addEventListener("click", async () => {
@@ -252,7 +365,6 @@ function renderHistory(records, month) {
     sr.forEach((r) => html += `<div class="row">${esc(r.agent)}<span class="day"> · ${esc(r.days || "")}</span></div>`);
     html += `</div>`;
   });
-  // any rows with unrecognised shift (e.g. fixed agents stored differently)
   const other = rows.filter((r) => !shifts.includes(r.shift));
   if (other.length) {
     html += `<div class="shift-col" style="background:linear-gradient(120deg,#374151,#6b7280)"><h3>Other <span class="day">${other.length}</span></h3>`;
@@ -263,7 +375,7 @@ function renderHistory(records, month) {
   el.innerHTML = html;
 }
 
-// ---------------- Archive ----------------
+// ================ ARCHIVE ================
 $("arc-refresh").addEventListener("click", loadArchive);
 async function loadArchive() {
   $("arc-status").textContent = "Loading…";

@@ -96,3 +96,16 @@ def read_local(key: str) -> bytes:
     if not str(path).startswith(str(config.UPLOADS_DIR.resolve())) or not path.is_file():
         raise FileNotFoundError(key)
     return path.read_bytes()
+
+
+def read_content(key: str) -> bytes:
+    """Read stored file bytes by key, works with both Blob and local backends."""
+    if using_blob():
+        recs = list_records()
+        rec = next((r for r in recs if r.get("key") == key), None)
+        if rec is None:
+            raise FileNotFoundError(key)
+        r = httpx.get(rec["url"], timeout=20)
+        r.raise_for_status()
+        return r.content
+    return read_local(key)

@@ -110,6 +110,21 @@ pre.csv { background: #f6f7fb; border: 1px solid var(--border); border-radius: 1
 .note { font-size: 13px; color: var(--muted); margin: 8px 0; }
 .warn { background: var(--amber-bg); color: #92400e; padding: 8px 12px; border-radius: 10px; font-size: 13px; margin: 8px 0; }
 
+/* ---- Main tab — current roster ---- */
+.main-roster-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.main-month-title { font-size: 20px; font-weight: 700; }
+.main-actions { display: flex; gap: 8px; align-items: center; }
+.main-roster-table { width: 100%; border-collapse: collapse; font-size: 14px; background: var(--card); }
+.main-roster-table th, .main-roster-table td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--border); }
+.main-roster-table th { color: var(--muted); font-weight: 600; font-size: 13px; }
+.shift-header-row td { background: var(--bg); color: var(--muted); font-weight: 700; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .06em; padding: 10px 14px 5px; border-bottom: none; }
+.main-roster-table select { font-size: 13px; padding: 6px 10px; border: 1px solid var(--border);
+  border-radius: 8px; background: #fff; color: var(--text); cursor: pointer; }
+.main-roster-table select:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+.row-changed { background: var(--amber-bg) !important; }
+.row-changed select { border-color: var(--amber); }
+
 .overlay { position: fixed; inset: 0; background: rgba(20,24,40,.55); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .login-card { background: #fff; border-radius: 16px; padding: 28px 30px; width: 320px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,.25); }
 .login-card h2 { font-size: 18px; margin: 0 0 16px; }

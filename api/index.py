@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import sys
 
 import pandas as pd
@@ -192,6 +193,47 @@ async def recommend(
         "history_csv": rec["history_rows"].to_csv(index=False),
         "allocation_csv": alloc.to_csv(index=False),
     }
+
+
+@app.get("/api/roster/latest")
+def roster_latest(x_app_password: str = Header(None)):
+    """Return the most recently saved roster allocation from storage."""
+    _auth(x_app_password)
+    recs = [r for r in storage.list_records()
+            if (r.get("key") or "").startswith("roster_recommend/")]
+    if not recs:
+        return {"month": None, "allocation": [], "saved_at": None}
+    latest = recs[0]
+    try:
+        content = storage.read_content(latest["key"])
+        df = pd.read_csv(io.StringIO(content.decode("utf-8")))
+        # key pattern: roster_recommend/20260630T143022Z_roster_2026-07.csv
+        fname = latest["key"].rsplit("/", 1)[-1]
+        m = re.search(r"roster_(\d{4}-\d{2})\.csv$", fname)
+        month = m.group(1) if m else ""
+        return {"month": month, "allocation": df.to_dict(orient="records"),
+                "saved_at": latest.get("uploaded_at")}
+    except Exception as exc:
+        raise HTTPException(500, f"Could not read latest roster: {exc}")
+
+
+@app.post("/api/roster/save")
+async def roster_save(
+    month: str = Form(...),
+    allocation: str = Form(...),
+    x_app_password: str = Header(None),
+):
+    """Persist a (possibly hand-edited) allocation as the new active roster."""
+    _auth(x_app_password)
+    try:
+        rows = json.loads(allocation)
+        df = pd.DataFrame(rows)
+        if not {"agent", "shift", "days"}.issubset(df.columns):
+            raise ValueError("Allocation must have agent, shift, days columns.")
+        storage.save_text("roster_recommend", f"roster_{month}.csv", df.to_csv(index=False))
+        return {"ok": True, "month": month, "agents": len(rows)}
+    except Exception as exc:
+        raise HTTPException(400, f"Could not save roster: {exc}")
 
 
 @app.post("/api/roster/history")
