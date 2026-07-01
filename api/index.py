@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+from datetime import date as _date
 
 import pandas as pd
 from fastapi import FastAPI, File, Form, Header, HTTPException, Response, UploadFile
@@ -172,22 +173,34 @@ async def recommend(
     rec = scheduling.recommend(current, history, month or None, tgt)
     alloc = rec["allocation"]
 
+    current_month = _date.today().strftime("%Y-%m")
+    # Build a saveable version of the current allocation (with month + fixed=False columns)
+    current_saveable = current.assign(fixed=False).copy()
+    current_saveable.insert(0, "month", current_month)
+
     try:
+        # Save next month's generated allocation (for Main tab "Next Month" section)
         storage.save_text("roster_recommend", f"roster_{rec['month']}.csv",
                           alloc.to_csv(index=False))
-        storage.save_text("history_rows", f"history_{rec['month']}.csv",
+        # Save current month's allocation (for Main tab "Current Roster" section)
+        storage.save_text("roster_current", f"roster_{current_month}.csv",
+                          current_saveable.to_csv(index=False))
+        # Save next month's history rows (accumulate for Roster History tab)
+        storage.save_text("roster_history", f"history_{rec['month']}.csv",
                           rec["history_rows"].to_csv(index=False))
     except Exception:
         pass
 
     return {
-        "month": rec["month"], "coverage": rec["coverage"],
+        "month": rec["month"],
+        "current_month": current_month,
+        "coverage": rec["coverage"],
         "avg_shift_spread": rec["avg_shift_spread"],
         "max_shift_spread": rec["max_shift_spread"],
         "avg_day_spread": rec["avg_day_spread"],
         "unfilled_slots": rec["unfilled_slots"],
         "unassigned_agents": rec["unassigned_agents"],
-        "current": current.to_dict(orient="records"),
+        "current": current.assign(fixed=False).to_dict(orient="records"),
         "allocation": alloc.to_dict(orient="records"),
         "history_rows": rec["history_rows"].to_dict(orient="records"),
         "history_csv": rec["history_rows"].to_csv(index=False),
@@ -195,30 +208,35 @@ async def recommend(
     }
 
 
-@app.get("/api/roster/latest")
-def roster_latest(x_app_password: str = Header(None)):
-    """Return the most recently saved roster allocation from storage."""
-    _auth(x_app_password)
+def _load_latest_csv(category: str):
+    """Read the most recent file from a storage category. Returns (month, rows, saved_at)."""
     recs = [r for r in storage.list_records()
-            if (r.get("key") or "").startswith("roster_recommend/")]
+            if (r.get("key") or "").startswith(f"{category}/")]
     if not recs:
-        return {"month": None, "allocation": [], "saved_at": None}
+        return None, [], None
     latest = recs[0]
     try:
         content = storage.read_content(latest["key"])
         df = pd.read_csv(io.StringIO(content.decode("utf-8")))
-        # Coerce the 'fixed' column from CSV string ("True"/"False") to actual bool
-        # so JSON serializes as true/false instead of a truthy string "False".
         if "fixed" in df.columns:
             df["fixed"] = df["fixed"].map(lambda x: str(x).lower() == "true")
-        # key pattern: roster_recommend/20260630T143022Z_roster_2026-07.csv
         fname = latest["key"].rsplit("/", 1)[-1]
         m = re.search(r"roster_(\d{4}-\d{2})\.csv$", fname)
-        month = m.group(1) if m else ""
-        return {"month": month, "allocation": df.to_dict(orient="records"),
-                "saved_at": latest.get("uploaded_at")}
-    except Exception as exc:
-        raise HTTPException(500, f"Could not read latest roster: {exc}")
+        return (m.group(1) if m else ""), df.to_dict(orient="records"), latest.get("uploaded_at")
+    except Exception:
+        return None, [], None
+
+
+@app.get("/api/roster/latest")
+def roster_latest(x_app_password: str = Header(None)):
+    """Return both the current-month roster and the next-month recommendation."""
+    _auth(x_app_password)
+    next_month, next_alloc, next_saved = _load_latest_csv("roster_recommend")
+    curr_month, curr_alloc, curr_saved = _load_latest_csv("roster_current")
+    return {
+        "next": {"month": next_month, "allocation": next_alloc, "saved_at": next_saved},
+        "current": {"month": curr_month, "allocation": curr_alloc, "saved_at": curr_saved},
+    }
 
 
 @app.post("/api/roster/save")
@@ -258,6 +276,26 @@ async def roster_history(
         raise
     except Exception as exc:
         raise HTTPException(400, f"Could not parse history: {exc}")
+    months = sorted(df["month"].unique().tolist())
+    return {"months": months, "records": df.to_dict(orient="records")}
+
+
+@app.get("/api/roster/history-auto")
+def roster_history_auto(x_app_password: str = Header(None)):
+    """Merge all auto-saved roster_history/ files without requiring manual upload."""
+    _auth(x_app_password)
+    recs = [r for r in storage.list_records()
+            if (r.get("key") or "").startswith("roster_history/")]
+    frames = []
+    for rec in recs:
+        try:
+            content = storage.read_content(rec["key"])
+            frames.append(pd.read_csv(io.StringIO(content.decode("utf-8")), dtype=str))
+        except Exception:
+            pass
+    if not frames:
+        return {"months": [], "records": []}
+    df = pd.concat(frames, ignore_index=True).drop_duplicates()
     months = sorted(df["month"].unique().tolist())
     return {"months": months, "records": df.to_dict(orient="records")}
 

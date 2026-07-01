@@ -31,8 +31,21 @@
   </header>
 
   <main>
-  <!-- MAIN — current active roster -->
+  <!-- MAIN — current and next month rosters -->
   <section id="main" class="panel active">
+    <span id="main-status" class="status"></span>
+
+    <!-- Current month (from uploaded roster sheet, read-only) -->
+    <div id="main-current-header" class="main-roster-header card" hidden>
+      <div>
+        <div id="main-current-month" class="main-month-title"></div>
+        <div class="muted" style="font-size:13px;margin-top:4px">Current roster — read only</div>
+      </div>
+      <button class="secondary" id="main-current-dl-csv">⬇️ CSV</button>
+    </div>
+    <div id="main-current-results"></div>
+
+    <!-- Next month (generated recommendation, editable) -->
     <div id="main-header" class="main-roster-header card" hidden>
       <div>
         <div id="main-month" class="main-month-title"></div>
@@ -43,7 +56,6 @@
         <button class="primary" id="main-save" hidden>💾 Save changes</button>
       </div>
     </div>
-    <span id="main-status" class="status"></span>
     <div id="main-results"></div>
   </section>
 

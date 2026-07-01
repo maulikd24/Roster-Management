@@ -13,8 +13,19 @@ async function initAuth() {
   try {
     const cfg = await (await fetch("/api/config")).json();
     if (cfg.auth_required && !getPw()) showLogin();
-    else loadMain();
-  } catch (e) { loadMain(); }
+    else { loadMain(); loadAttendanceCache(); }
+  } catch (e) { loadMain(); loadAttendanceCache(); }
+}
+
+function loadAttendanceCache() {
+  try {
+    const cached = localStorage.getItem("attendance_cache");
+    if (!cached) return;
+    renderAttendance(JSON.parse(cached));
+    $("att-results").insertAdjacentHTML("afterbegin",
+      `<div class="warn" style="background:var(--blue-bg);color:#1e40af;margin-bottom:12px">
+        ℹ️ Showing last computed report. Upload new files above to refresh.</div>`);
+  } catch (_) {}
 }
 function showLogin() { $("login").hidden = false; }
 $("login-btn").addEventListener("click", async () => {
@@ -35,6 +46,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
     btn.classList.add("active");
     $(btn.dataset.tab).classList.add("active");
     if (btn.dataset.tab === "main") loadMain();
+    if (btn.dataset.tab === "history") loadHistoryAuto();
     if (btn.dataset.tab === "archive") loadArchive();
   });
 });
@@ -58,11 +70,13 @@ function download(name, text, type) {
   a.download = name; a.click();
 }
 
-// ================ MAIN TAB — current active roster ================
+// ================ MAIN TAB — current + next month rosters ================
 const ROSTER_SHIFTS = ["Night", "Afternoon", "Morning"];
 const ROSTER_DAYWEEKS = ["Sun-Thurs", "Tues-Sat", "Mon-Fri"];
-let _mainAlloc = [];
+let _mainAlloc = [];    // next month (editable)
 let _mainMonth = null;
+let _currentAlloc = []; // current month (read-only)
+let _currentMonth = null;
 
 async function loadMain() {
   const statusEl = $("main-status");
@@ -72,40 +86,73 @@ async function loadMain() {
     if (res.status === 401) { showLogin(); return; }
     const d = await res.json();
     statusEl.textContent = "";
-    if (!d.month) {
-      // API returned empty (Vercel without Blob, or genuinely no roster yet).
-      // Fall back to the locally cached copy from the last recommend run.
+
+    const next = d.next || {};
+    const current = d.current || {};
+
+    if (!next.month && !current.month) {
+      // API returned empty — fall back to localStorage (Vercel without Blob, or offline).
       try {
-        const cached = localStorage.getItem("roster_cache");
-        if (cached) {
-          const c = JSON.parse(cached);
-          _mainAlloc = c.allocation;
-          _mainMonth = c.month;
-          $("main-month").textContent = `Current Roster — ${c.month}`;
-          $("main-saved-at").textContent = `Cached locally — ${c.saved_at.slice(0, 16).replace("T", " ")} UTC`;
-          $("main-header").hidden = false;
-          $("main-save").hidden = true;
-          renderMainRoster(c.allocation);
+        const cached = JSON.parse(localStorage.getItem("roster_cache") || "{}");
+        // Support both new {current,next} format and old flat {month,allocation} format.
+        const cachedNext = cached.next || (cached.month ? { month: cached.month, allocation: cached.allocation, saved_at: cached.saved_at } : {});
+        const cachedCurrent = cached.current || {};
+        if (cachedNext.month || cachedCurrent.month) {
+          _applyRosterData(cachedCurrent, cachedNext);
           return;
         }
       } catch (_) {}
+      $("main-current-header").hidden = true;
+      $("main-current-results").innerHTML = "";
       $("main-header").hidden = true;
       $("main-results").innerHTML = `<div class="card"><p class="note" style="font-size:15px;padding:8px 0">
         No roster saved yet.<br>Go to <b>Roster scheduling</b> to generate one — it will appear here automatically.</p></div>`;
       return;
     }
-    _mainAlloc = d.allocation;
-    _mainMonth = d.month;
-    $("main-month").textContent = `Current Roster — ${d.month}`;
-    $("main-saved-at").textContent = d.saved_at
-      ? `Last updated: ${d.saved_at.slice(0, 16).replace("T", " ")} UTC`
+    _applyRosterData(current, next);
+  } catch (e) {
+    // Network error — try localStorage before showing error.
+    try {
+      const cached = JSON.parse(localStorage.getItem("roster_cache") || "{}");
+      const cachedNext = cached.next || (cached.month ? { month: cached.month, allocation: cached.allocation } : {});
+      const cachedCurrent = cached.current || {};
+      if (cachedNext.month || cachedCurrent.month) {
+        statusEl.textContent = "";
+        _applyRosterData(cachedCurrent, cachedNext);
+        return;
+      }
+    } catch (_) {}
+    statusEl.className = "status err";
+    statusEl.textContent = "Could not load roster: " + e.message;
+  }
+}
+
+function _applyRosterData(current, next) {
+  // Current month — read-only
+  if (current.month && current.allocation && current.allocation.length) {
+    _currentAlloc = current.allocation;
+    _currentMonth = current.month;
+    $("main-current-month").textContent = `Current Roster — ${current.month}`;
+    $("main-current-header").hidden = false;
+    renderCurrentRoster(current.allocation);
+  } else {
+    $("main-current-header").hidden = true;
+    $("main-current-results").innerHTML = "";
+  }
+  // Next month — editable
+  if (next.month && next.allocation && next.allocation.length) {
+    _mainAlloc = next.allocation;
+    _mainMonth = next.month;
+    $("main-month").textContent = `Next Month Roster — ${next.month}`;
+    $("main-saved-at").textContent = next.saved_at
+      ? `Last updated: ${next.saved_at.slice(0, 16).replace("T", " ")} UTC`
       : "";
     $("main-header").hidden = false;
     $("main-save").hidden = true;
-    renderMainRoster(d.allocation);
-  } catch (e) {
-    statusEl.className = "status err";
-    statusEl.textContent = "Could not load roster: " + e.message;
+    renderMainRoster(next.allocation);
+  } else {
+    $("main-header").hidden = true;
+    $("main-results").innerHTML = "";
   }
 }
 
@@ -155,6 +202,31 @@ function renderMainRoster(alloc) {
   });
 }
 
+function renderCurrentRoster(alloc) {
+  const rotating = alloc.filter((r) => !r.fixed);
+  const fixed = alloc.filter((r) => r.fixed);
+  let html = `<div class="card"><table class="main-roster-table"><thead>
+    <tr><th>Agent</th><th>Shift</th><th>Day week</th></tr></thead><tbody>`;
+  ROSTER_SHIFTS.forEach((shift) => {
+    const rows = rotating.filter((r) => r.shift === shift);
+    if (!rows.length) return;
+    html += `<tr class="shift-header-row"><td colspan="3">${shift}</td></tr>`;
+    rows.forEach((r) => {
+      html += `<tr><td>${esc(r.agent)}</td><td>${esc(r.shift)}</td><td>${esc(r.days)}</td></tr>`;
+    });
+  });
+  if (fixed.length) {
+    html += `<tr class="shift-header-row"><td colspan="3">Fixed (Mon-Fri)</td></tr>`;
+    fixed.forEach((r) => {
+      html += `<tr><td>${esc(r.agent)}</td>
+        <td class="muted">${esc(r.shift)}</td>
+        <td class="muted">${esc(r.days)}</td></tr>`;
+    });
+  }
+  html += `</tbody></table></div>`;
+  $("main-current-results").innerHTML = html;
+}
+
 $("main-save").addEventListener("click", async () => {
   const rows = [];
   document.querySelectorAll("#main-results tbody tr[data-agent]").forEach((tr) => {
@@ -179,16 +251,20 @@ $("main-save").addEventListener("click", async () => {
     const ts = new Date().toISOString();
     $("main-saved-at").textContent = `Last updated: ${ts.slice(0, 16).replace("T", " ")} UTC`;
     try {
-      localStorage.setItem("roster_cache", JSON.stringify({
-        month: _mainMonth, allocation: rows, saved_at: ts
-      }));
+      const cache = JSON.parse(localStorage.getItem("roster_cache") || "{}");
+      cache.next = { month: _mainMonth, allocation: rows, saved_at: ts };
+      localStorage.setItem("roster_cache", JSON.stringify(cache));
     } catch (_) {}
   }
 });
 
 $("main-dl-csv").addEventListener("click", () => {
   if (!_mainAlloc.length) return;
-  download(`roster_${_mainMonth || "current"}.csv`, toCSV(_mainAlloc));
+  download(`roster_${_mainMonth || "next"}.csv`, toCSV(_mainAlloc));
+});
+$("main-current-dl-csv").addEventListener("click", () => {
+  if (!_currentAlloc.length) return;
+  download(`roster_${_currentMonth || "current"}.csv`, toCSV(_currentAlloc));
 });
 
 // ================ ATTENDANCE ================
@@ -243,6 +319,7 @@ function renderAttendance(d) {
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Attendance");
     XLSX.writeFile(wb, "attendance.xlsx");
   };
+  try { localStorage.setItem("attendance_cache", JSON.stringify(d)); } catch (_) {}
 }
 
 function toCSV(rows) {
@@ -343,11 +420,12 @@ function renderRoster(d) {
   $("dl-hist").onclick = () => download("shift_history_append.csv", d.history_csv);
   $("dl-alloc").onclick = () => download("roster_" + d.month + ".csv", d.allocation_csv);
 
-  // Cache the roster locally so the Main tab can show it even when Vercel Blob
-  // isn't configured (serverless containers have no shared filesystem).
+  // Cache current + next so the Main tab survives a page refresh even without Blob.
   try {
+    const ts = new Date().toISOString();
     localStorage.setItem("roster_cache", JSON.stringify({
-      month: d.month, allocation: d.allocation, saved_at: new Date().toISOString()
+      current: { month: d.current_month, allocation: d.current, saved_at: ts },
+      next: { month: d.month, allocation: d.allocation, saved_at: ts },
     }));
   } catch (_) {}
 }
@@ -403,6 +481,20 @@ function renderHistory(records, month) {
   }
   html += `</div>`;
   el.innerHTML = html;
+}
+
+async function loadHistoryAuto() {
+  // Auto-load accumulated history from server (no upload needed).
+  // Falls back gracefully if no history exists yet.
+  try {
+    const res = await fetch("/api/roster/history-auto", { headers: authHeaders() });
+    if (!res.ok) return;
+    const d = await res.json();
+    if (d.months.length) {
+      _histRecords = d.records;
+      renderHistoryControls(d.months);
+    }
+  } catch (_) {}
 }
 
 // ================ ARCHIVE ================
