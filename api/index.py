@@ -207,6 +207,10 @@ def roster_latest(x_app_password: str = Header(None)):
     try:
         content = storage.read_content(latest["key"])
         df = pd.read_csv(io.StringIO(content.decode("utf-8")))
+        # Coerce the 'fixed' column from CSV string ("True"/"False") to actual bool
+        # so JSON serializes as true/false instead of a truthy string "False".
+        if "fixed" in df.columns:
+            df["fixed"] = df["fixed"].map(lambda x: str(x).lower() == "true")
         # key pattern: roster_recommend/20260630T143022Z_roster_2026-07.csv
         fname = latest["key"].rsplit("/", 1)[-1]
         m = re.search(r"roster_(\d{4}-\d{2})\.csv$", fname)

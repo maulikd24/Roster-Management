@@ -73,6 +73,22 @@ async function loadMain() {
     const d = await res.json();
     statusEl.textContent = "";
     if (!d.month) {
+      // API returned empty (Vercel without Blob, or genuinely no roster yet).
+      // Fall back to the locally cached copy from the last recommend run.
+      try {
+        const cached = localStorage.getItem("roster_cache");
+        if (cached) {
+          const c = JSON.parse(cached);
+          _mainAlloc = c.allocation;
+          _mainMonth = c.month;
+          $("main-month").textContent = `Current Roster — ${c.month}`;
+          $("main-saved-at").textContent = `Cached locally — ${c.saved_at.slice(0, 16).replace("T", " ")} UTC`;
+          $("main-header").hidden = false;
+          $("main-save").hidden = true;
+          renderMainRoster(c.allocation);
+          return;
+        }
+      } catch (_) {}
       $("main-header").hidden = true;
       $("main-results").innerHTML = `<div class="card"><p class="note" style="font-size:15px;padding:8px 0">
         No roster saved yet.<br>Go to <b>Roster scheduling</b> to generate one — it will appear here automatically.</p></div>`;
@@ -160,7 +176,13 @@ $("main-save").addEventListener("click", async () => {
     _mainAlloc = rows;
     $("main-save").hidden = true;
     document.querySelectorAll(".row-changed").forEach((tr) => tr.classList.remove("row-changed"));
-    $("main-saved-at").textContent = `Last updated: ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`;
+    const ts = new Date().toISOString();
+    $("main-saved-at").textContent = `Last updated: ${ts.slice(0, 16).replace("T", " ")} UTC`;
+    try {
+      localStorage.setItem("roster_cache", JSON.stringify({
+        month: _mainMonth, allocation: rows, saved_at: ts
+      }));
+    } catch (_) {}
   }
 });
 
@@ -320,6 +342,14 @@ function renderRoster(d) {
   $("ros-results").innerHTML = html;
   $("dl-hist").onclick = () => download("shift_history_append.csv", d.history_csv);
   $("dl-alloc").onclick = () => download("roster_" + d.month + ".csv", d.allocation_csv);
+
+  // Cache the roster locally so the Main tab can show it even when Vercel Blob
+  // isn't configured (serverless containers have no shared filesystem).
+  try {
+    localStorage.setItem("roster_cache", JSON.stringify({
+      month: d.month, allocation: d.allocation, saved_at: new Date().toISOString()
+    }));
+  } catch (_) {}
 }
 
 // ================ ROSTER HISTORY ================
